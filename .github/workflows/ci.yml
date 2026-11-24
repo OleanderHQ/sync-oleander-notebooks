@@ -55,3 +55,25 @@ jobs:
             echo "::error::An unknown mode should fail the action."
             exit 1
           fi
+
+  rejects-empty-key:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Run without a key
+        id: nokey
+        continue-on-error: true
+        uses: ./
+        with:
+          api-key: ""
+          path: test/empty
+
+      - name: Expect failure
+        shell: bash
+        run: |
+          if [[ "${{ steps.nokey.outcome }}" != "failure" ]]; then
+            echo "::error::An empty api-key should fail the action."
+            exit 1
+          fi

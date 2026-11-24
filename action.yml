@@ -45,7 +45,7 @@ runs:
       run: |
         set -euo pipefail
         if [[ -z "${OLEANDER_API_KEY}" ]]; then
-          echo "::error::api-key is empty. Pass it from a secret, like api-key: \${{ secrets.OLEANDER_API_KEY }}. Pull requests from forks get no secrets."
+          echo "::error::api-key is empty. Pass it from a secret, like secrets.OLEANDER_API_KEY. Pull requests from forks get no secrets."
           exit 1
         fi
         oleander configure --profile github-actions < /dev/null
