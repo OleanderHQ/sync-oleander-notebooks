@@ -1,0 +1,106 @@
+name: Sync oleander notebooks
+description: Plan oleander notebook changes on pull requests and sync *.notebook.yaml files to oleander on merge.
+branding:
+  icon: book-open
+  color: green
+
+inputs:
+  api-key:
+    description: oleander API key. Notebooks are saved and published as this key's user.
+    required: true
+  path:
+    description: Files or directories to search for *.notebook.yaml, one per line.
+    required: false
+    default: "."
+  mode:
+    description: "plan (save nothing), sync, or auto: plan on pull_request events, sync otherwise."
+    required: false
+    default: auto
+  approve:
+    description: When syncing, apply changes that add outputs, a schedule, destinations or a budget.
+    required: false
+    default: "true"
+  publish:
+    description: When syncing, publish the draft a save leaves on a live notebook.
+    required: false
+    default: "true"
+  cli-version:
+    description: Exact oleander-cli version to install. Defaults to the latest.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Setup oleander-cli
+      uses: OleanderHQ/setup-oleander-cli@v1
+      with:
+        version: ${{ inputs.cli-version }}
+
+    - name: Configure oleander
+      shell: bash
+      env:
+        OLEANDER_API_KEY: ${{ inputs.api-key }}
+        OLEANDER_CONFIG_DIR: ${{ runner.temp }}/oleander-notebooks
+      run: |
+        set -euo pipefail
+        if [[ -z "${OLEANDER_API_KEY}" ]]; then
+          echo "::error::api-key is empty. Pass it from a secret, like api-key: \${{ secrets.OLEANDER_API_KEY }}. Pull requests from forks get no secrets."
+          exit 1
+        fi
+        oleander configure --profile github-actions < /dev/null
+
+    - name: Sync notebooks
+      shell: bash
+      env:
+        OLEANDER_CONFIG_DIR: ${{ runner.temp }}/oleander-notebooks
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_APPROVE: ${{ inputs.approve }}
+        INPUT_PUBLISH: ${{ inputs.publish }}
+      run: |
+        set -euo pipefail
+
+        if ! oleander notebooks sync --help > /dev/null 2>&1; then
+          echo "::error::oleander $(oleander --version) has no notebooks sync command. Use oleander-cli 0.27.0 or later."
+          exit 1
+        fi
+
+        mode="${INPUT_MODE}"
+        case "${mode}" in
+          auto)
+            if [[ "${GITHUB_EVENT_NAME}" == pull_request* ]]; then mode=plan; else mode=sync; fi
+            ;;
+          plan|sync) ;;
+          *)
+            echo "::error::mode must be auto, plan or sync, not '${mode}'."
+            exit 1
+            ;;
+        esac
+
+        for name in approve publish; do
+          var="INPUT_${name^^}"
+          if [[ "${!var}" != "true" && "${!var}" != "false" ]]; then
+            echo "::error::${name} must be true or false, not '${!var}'."
+            exit 1
+          fi
+        done
+
+        paths=()
+        while IFS= read -r line; do
+          line="${line#"${line%%[![:space:]]*}"}"
+          line="${line%"${line##*[![:space:]]}"}"
+          [[ -n "${line}" ]] && paths+=("${line}")
+        done <<< "${INPUT_PATH}"
+        [[ ${#paths[@]} -eq 0 ]] && paths=(.)
+
+        args=(notebooks sync "${paths[@]}" --summary "${GITHUB_STEP_SUMMARY}")
+        if [[ "${mode}" == plan ]]; then
+          args+=(--dry-run)
+        else
+          [[ "${INPUT_APPROVE}" == true ]] && args+=(--approve)
+          [[ "${INPUT_PUBLISH}" == true ]] && args+=(--publish)
+        fi
+
+        echo "oleander ${args[*]}"
+        oleander "${args[@]}"

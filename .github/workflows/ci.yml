@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# These runs never reach the oleander API: the key is a placeholder and the
+# searched directory has no notebooks.
+env:
+  PLACEHOLDER_KEY: eyJhbGciOiJub25lIn0.eyJ0aWQiOiJvcmdfY2kiLCJ1aWQiOiJ1c2VyX2NpIn0.ci
+
+jobs:
+  empty-directory:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [plan, sync]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Sync an empty directory
+        uses: ./
+        with:
+          api-key: ${{ env.PLACEHOLDER_KEY }}
+          path: test/empty
+          mode: ${{ matrix.mode }}
+
+  rejects-bad-input:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Run with an unknown mode
+        id: bad
+        continue-on-error: true
+        uses: ./
+        with:
+          api-key: ${{ env.PLACEHOLDER_KEY }}
+          path: test/empty
+          mode: apply
+
+      - name: Expect failure
+        shell: bash
+        run: |
+          if [[ "${{ steps.bad.outcome }}" != "failure" ]]; then
+            echo "::error::An unknown mode should fail the action."
+            exit 1
+          fi
