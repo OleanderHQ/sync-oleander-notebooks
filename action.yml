@@ -24,6 +24,14 @@ inputs:
     description: When syncing, publish the draft a save leaves on a live notebook.
     required: false
     default: "true"
+  delete:
+    description: Delete the notebooks of *.notebook.yaml files removed by the change, with their run history and result tables. Plans list them as would-delete.
+    required: false
+    default: "false"
+  base-ref:
+    description: Git ref to find removed files against. Defaults to the pull request's base, or the commit before the push.
+    required: false
+    default: ""
   cli-version:
     description: Exact oleander-cli version to install. Defaults to the latest.
     required: false
@@ -58,6 +66,9 @@ runs:
         INPUT_MODE: ${{ inputs.mode }}
         INPUT_APPROVE: ${{ inputs.approve }}
         INPUT_PUBLISH: ${{ inputs.publish }}
+        INPUT_DELETE: ${{ inputs.delete }}
+        INPUT_BASE_REF: ${{ inputs.base-ref }}
+        EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
       run: |
         set -euo pipefail
 
@@ -78,7 +89,7 @@ runs:
             ;;
         esac
 
-        for name in approve publish; do
+        for name in approve publish delete; do
           var="INPUT_${name^^}"
           if [[ "${!var}" != "true" && "${!var}" != "false" ]]; then
             echo "::error::${name} must be true or false, not '${!var}'."
@@ -95,6 +106,30 @@ runs:
         [[ ${#paths[@]} -eq 0 ]] && paths=(.)
 
         args=(notebooks sync "${paths[@]}" --summary "${GITHUB_STEP_SUMMARY}")
+
+        # Notebook files removed since the base are reported, and deleted
+        # with delete: true. A push that creates a branch has no base.
+        base="${INPUT_BASE_REF:-${EVENT_BASE_SHA:-}}"
+        [[ "${base}" =~ ^0+$ ]] && base=""
+        if ! oleander notebooks sync --help 2>/dev/null | grep -q -- --removed-since; then
+          if [[ "${INPUT_DELETE}" == true ]]; then
+            echo "::error::delete needs oleander-cli 0.28.0 or later; this is $(oleander --version)."
+            exit 1
+          fi
+          base=""
+        elif [[ -n "${base}" ]]; then
+          if ! git rev-parse --verify --quiet "${base}^{commit}" > /dev/null; then
+            git fetch --quiet --no-tags --depth=1 origin "${base}" 2>/dev/null || true
+          fi
+          if git rev-parse --verify --quiet "${base}^{commit}" > /dev/null; then
+            args+=(--removed-since "${base}")
+            [[ "${INPUT_DELETE}" == true ]] && args+=(--delete)
+          else
+            echo "::warning::Could not fetch ${base}, so removed notebook files were not checked."
+          fi
+        elif [[ "${INPUT_DELETE}" == true ]]; then
+          echo "::warning::No base commit to compare against (set base-ref), so removed notebook files were not checked."
+        fi
         if [[ "${mode}" == plan ]]; then
           args+=(--dry-run)
         else

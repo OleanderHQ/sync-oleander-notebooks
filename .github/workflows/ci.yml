@@ -77,3 +77,63 @@ jobs:
             echo "::error::An empty api-key should fail the action."
             exit 1
           fi
+
+  removed-files:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Commit a notebook file, then remove it
+        id: fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name ci
+          git config user.email ci@example.com
+          mkdir -p test/removed
+          printf 'version: 1\nslug: ci-removed\ncells:\n  - id: a\n    sql: SELECT 1\n' > test/removed/ci-removed.notebook.yaml
+          git add test/removed && git commit -q -m "add fixture"
+          echo "base=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          git rm -q test/removed/ci-removed.notebook.yaml && git commit -q -m "remove fixture"
+          mkdir -p test/removed
+
+      # Neither of these calls the API: a dry run only reports, and without
+      # delete the notebook is only reported.
+      - name: Plan the deletion
+        uses: ./
+        with:
+          api-key: ${{ env.PLACEHOLDER_KEY }}
+          path: test/removed
+          mode: plan
+          delete: "true"
+          base-ref: ${{ steps.fixture.outputs.base }}
+
+      - name: Report without deleting
+        uses: ./
+        with:
+          api-key: ${{ env.PLACEHOLDER_KEY }}
+          path: test/removed
+          mode: sync
+          base-ref: ${{ steps.fixture.outputs.base }}
+
+      # With the placeholder key the delete request is refused, which shows
+      # the action tried it.
+      - name: Delete
+        id: delete
+        continue-on-error: true
+        uses: ./
+        with:
+          api-key: ${{ env.PLACEHOLDER_KEY }}
+          path: test/removed
+          mode: sync
+          delete: "true"
+          base-ref: ${{ steps.fixture.outputs.base }}
+
+      - name: Expect the delete request to be refused
+        shell: bash
+        run: |
+          if [[ "${{ steps.delete.outcome }}" != "failure" ]]; then
+            echo "::error::Deleting with a placeholder key should fail."
+            exit 1
+          fi
